@@ -25,6 +25,10 @@ from pytest_rich.capture import save_terminal_output
 from pytest_rich.header import generate_header_panel
 from pytest_rich.traceback import RichExceptionChainRepr
 
+from rich.syntax import Syntax
+from rich.json import JSON
+from rich.console import Group
+
 HORIZONTAL_PAD = (0, 1, 0, 1)
 
 
@@ -71,7 +75,8 @@ class RichTerminalReporter:
             if self.collect_progress is not None:
                 self.collect_progress.update(
                     self.collect_task,
-                    description=f"[cyan][bold]Collecting[/cyan] [magenta]{report.nodeid}[/magenta] ([green]{self.total_items_collected}[/green] total items)",
+                    description=f"[cyan][bold]Collecting[/cyan] [magenta]{
+                        report.nodeid}[/magenta] ([green]{self.total_items_collected}[/green] total items)",
                     refresh=True,
                 )
 
@@ -79,7 +84,8 @@ class RichTerminalReporter:
         if self.collect_progress is not None:
             self.collect_progress.update(
                 self.collect_task,
-                description=f"[cyan][bold]Collected [green]{self.total_items_collected} [cyan]items",
+                description=f"[cyan][bold]Collected [green]{
+                    self.total_items_collected} [cyan]items",
                 completed=True,
             )
             self.collect_progress.stop()
@@ -156,7 +162,8 @@ class RichTerminalReporter:
         completed_count = [x for x in statuses if x in ("success", "fail")]
         completed = len(completed_count) == len(items)
         percent = len(completed_count) * 100 // len(items)
-        description = f"[cyan][{percent:3d}%] [/cyan]{base_fn} " + "".join(chars)
+        description = f"[cyan][{
+            percent:3d}%] [/cyan]{base_fn} " + "".join(chars)
         if self.runtest_progress is not None:
             self.runtest_progress.update(
                 task,
@@ -221,6 +228,64 @@ class RichTerminalReporter:
             save_terminal_output(self.console, self.config.getoption("rich_capture"))
 
     def print_summary(self, error_messages):
+        """Print a nicely formatted test summary with syntax highlighting."""
+        # Print successes in a clean, compact format
+        if self.verbose:
+            success_group = Group()
+            for nodeid, status in self.status_per_item.items():
+                if status == "success":
+                    success_group.renderables.append(
+                        Text.assemble(("✓ ", "green"), (nodeid, "default"))
+                    )
+            if success_group.renderables:
+                self.console.print(
+                    Panel(
+                        success_group,
+                        title="[green]Successful Tests[/green]",
+                        expand=False,
+                    )
+                )
+
+        # Print failures with rich formatting and syntax highlighting
+        for nodeid, errors in error_messages.items():
+            i = 0
+            try:
+                # Format error message
+                if errors[i].startswith("{"):
+                    # JSON formatting
+                    error_panel = [JSON(errors[i])]
+                else:
+                    # Syntax highlighted error with proper wrapping
+                    error_panel = [
+                        Syntax(
+                            errors[i],
+                            "python",
+                            theme="monokai",
+                            word_wrap=True,
+                            background_color="default",
+                        )
+                    ]
+
+                self.console.print(
+                    Panel(
+                        Group(*error_panel),
+                        title=f"[red]FAILED[/red] {nodeid}",
+                        border_style="red",
+                        expand=True,
+                    )
+                )
+                i += 1
+            except Exception as e:
+                # Fallback to plain text if parsing fails
+                self.console.print(
+                    Panel(
+                        Text("\n".join(errors)),
+                        title=f"[red]FAILED[/red] {nodeid}",
+                        border_style="red",
+                    )
+                )
+
+        # Print final summary
         summary_table = Table.grid()
         summary_table.add_column(justify="right")
         summary_table.add_column()
@@ -228,14 +293,9 @@ class RichTerminalReporter:
 
         summary_table.add_row(
             Padding(
-                str(self.total_items_completed),
-                pad=HORIZONTAL_PAD,
-                style="bold cyan",
+                str(self.total_items_completed), pad=HORIZONTAL_PAD, style="bold cyan"
             ),
-            Padding(
-                "Total Tests",
-                pad=HORIZONTAL_PAD,
-            ),
+            Padding("Total Tests", pad=HORIZONTAL_PAD),
             style="default",
         )
 
@@ -244,48 +304,29 @@ class RichTerminalReporter:
             "failed": "bold red",
             "skipped": "bold yellow",
         }
+
         for state, reports in self.categorized_reports.items():
             no_of_items = len(reports)
             if no_of_items > 0:
                 summary_table.add_row(
-                    Padding(
-                        str(no_of_items),
-                        pad=HORIZONTAL_PAD,
-                    ),
-                    Padding(
-                        state.title(),
-                        pad=HORIZONTAL_PAD,
-                    ),
+                    Padding(str(no_of_items), pad=HORIZONTAL_PAD),
+                    Padding(state.title(), pad=HORIZONTAL_PAD),
                     Padding(
                         f"({100 * no_of_items / self.total_items_completed:.1f}%)",
                         pad=HORIZONTAL_PAD,
                     ),
-                    #
                     style=style_dict[state],
                 )
 
-        if self.verbose is True:
-            for nodeid, status in self.status_per_item.items():
-                if status == "success":
-                    self.console.print(
-                        Text("SUCCESS ", style="green"), Text(f"{nodeid}")
-                    )
-
-        for nodeid, errors in error_messages.items():
-            self.console.print(
-                Text("FAILED ", style="red"),
-                Text(f"{nodeid} {''.join(errors)}"),
+        self.console.print(
+            Panel(
+                summary_table,
+                title="Summary",
+                style="bold blue",
+                expand=False,
+                border_style="bold blue",
             )
-
-        result_summary_panel = Panel(
-            summary_table,
-            title="Summary",
-            style="bold blue",
-            expand=False,
-            border_style="bold blue",
         )
-        self.console.print("\n")
-        self.console.print(result_summary_panel)
 
     def pytest_keyboard_interrupt(
         self, excinfo: pytest.ExceptionInfo[BaseException]
